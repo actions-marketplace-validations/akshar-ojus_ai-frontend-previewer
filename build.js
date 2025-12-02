@@ -9,6 +9,7 @@ const ANALYSIS_PATH = './analysis.json';
 const ACTION_DIR = __dirname;
 const USER_DIR = process.cwd();
 const VITE_BIN = path.resolve(ACTION_DIR, 'node_modules', '.bin', 'vite');
+const TIMESTAMP = Date.now(); // Cache-busting ID
 
 async function buildDashboard() {
   console.log("🏗️  Starting MockMirror Build...");
@@ -65,11 +66,17 @@ async function buildDashboard() {
     `;
     fs.writeFileSync(path.join(USER_DIR, entryName), entryContent);
 
+    // Add No-Cache Meta Tags to Component Preview
     const htmlContent = `
       <!DOCTYPE html>
       <html>
-        <head><title>Preview: ${safeName}</title></head>
-        <body><div id="root"></div><script type="module" src="/${entryName}"></script></body>
+        <head>
+          <title>Preview: ${safeName}</title>
+          <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+          <meta http-equiv="Pragma" content="no-cache" />
+          <meta http-equiv="Expires" content="0" />
+        </head>
+        <body><div id="root"></div><script type="module" src="/${entryName}?t=${TIMESTAMP}"></script></body>
       </html>
     `;
     fs.writeFileSync(path.join(USER_DIR, htmlName), htmlContent);
@@ -78,7 +85,7 @@ async function buildDashboard() {
     dashboardData.push({ name: safeName, url: htmlName, originalPath: filePath });
   });
 
-  // 3. COPY DASHBOARD ASSETS TO USER DIR
+  // 3. COPY DASHBOARD ASSETS
   const dashboardSrc = fs.readFileSync(path.join(ACTION_DIR, 'src', 'Dashboard.jsx'), 'utf8');
   const dashboardCss = fs.readFileSync(path.join(ACTION_DIR, 'src', 'dashboard.css'), 'utf8');
   
@@ -92,17 +99,24 @@ async function buildDashboard() {
   fs.writeFileSync(path.join(USER_DIR, 'dashboard.data.js'), dataFileContent);
 
   // 5. GENERATE DASHBOARD HTML
+  // Add No-Cache Meta Tags to Main Dashboard
   const indexHtml = `
     <!DOCTYPE html>
     <html lang="en">
-      <head><meta charset="UTF-8" /><title>MockMirror Dashboard</title></head>
-      <body><div id="root"></div><script type="module" src="/mm-dashboard.jsx"></script></body>
+      <head>
+        <meta charset="UTF-8" />
+        <title>MockMirror Dashboard</title>
+        <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+        <meta http-equiv="Pragma" content="no-cache" />
+        <meta http-equiv="Expires" content="0" />
+      </head>
+      <body><div id="root"></div><script type="module" src="/mm-dashboard.jsx?t=${TIMESTAMP}"></script></body>
     </html>
   `;
   fs.writeFileSync(path.join(USER_DIR, 'index.html'), indexHtml);
   viteInputs['main'] = path.resolve(USER_DIR, 'index.html');
 
-  // 6. GENERATE VITE CONFIG (With Router Aliases!)
+  // 6. GENERATE VITE CONFIG
   const viteConfigContent = `
     import { defineConfig } from 'vite';
     import react from '@vitejs/plugin-react';
@@ -122,9 +136,6 @@ async function buildDashboard() {
       resolve: {
         alias: {
           '/dashboard.css': path.resolve('${USER_DIR}', 'dashboard.css'),
-          
-          // FIX: ALIASES FOR REACT & ROUTER
-          // This forces Vite to use the Action's installed packages
           'react': path.resolve('${ACTION_DIR}', 'node_modules', 'react'),
           'react-dom': path.resolve('${ACTION_DIR}', 'node_modules', 'react-dom'),
           'react/jsx-runtime': path.resolve('${ACTION_DIR}', 'node_modules', 'react/jsx-runtime'),
