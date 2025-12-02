@@ -78,7 +78,7 @@ async function buildDashboard() {
     dashboardData.push({ name: safeName, url: htmlName, originalPath: filePath });
   });
 
-  // 3. COPY DASHBOARD ASSETS
+  // 3. COPY DASHBOARD ASSETS TO USER DIR
   const dashboardSrc = fs.readFileSync(path.join(ACTION_DIR, 'src', 'Dashboard.jsx'), 'utf8');
   const dashboardCss = fs.readFileSync(path.join(ACTION_DIR, 'src', 'dashboard.css'), 'utf8');
   
@@ -102,8 +102,7 @@ async function buildDashboard() {
   fs.writeFileSync(path.join(USER_DIR, 'index.html'), indexHtml);
   viteInputs['main'] = path.resolve(USER_DIR, 'index.html');
 
-  // 6. GENERATE VITE CONFIG
-  // FIX: We inject aliases to force Vite to use the Action's node_modules
+  // 6. GENERATE VITE CONFIG (With Router Aliases!)
   const viteConfigContent = `
     import { defineConfig } from 'vite';
     import react from '@vitejs/plugin-react';
@@ -123,10 +122,15 @@ async function buildDashboard() {
       resolve: {
         alias: {
           '/dashboard.css': path.resolve('${USER_DIR}', 'dashboard.css'),
-          // FORCE REACT TO RESOLVE FROM ACTION DIR
+          
+          // FIX: ALIASES FOR REACT & ROUTER
+          // This forces Vite to use the Action's installed packages
           'react': path.resolve('${ACTION_DIR}', 'node_modules', 'react'),
           'react-dom': path.resolve('${ACTION_DIR}', 'node_modules', 'react-dom'),
           'react/jsx-runtime': path.resolve('${ACTION_DIR}', 'node_modules', 'react/jsx-runtime'),
+          'react-router-dom': path.resolve('${ACTION_DIR}', 'node_modules', 'react-router-dom'),
+          'react-router': path.resolve('${ACTION_DIR}', 'node_modules', 'react-router'),
+          '@remix-run/router': path.resolve('${ACTION_DIR}', 'node_modules', '@remix-run/router'),
         }
       }
     });
