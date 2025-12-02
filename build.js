@@ -5,11 +5,13 @@ const glob = require('glob');
 
 const ANALYSIS_PATH = './analysis.json';
 
-// Find the Vite binary inside the Action's node_modules
-const VITE_BIN = path.resolve(__dirname, 'node_modules', '.bin', 'vite');
+// Paths
+const ACTION_DIR = __dirname;
+const USER_DIR = process.cwd();
+const VITE_BIN = path.resolve(ACTION_DIR, 'node_modules', '.bin', 'vite');
 
 async function buildDashboard() {
-  console.log("🏗️  Starting React Dashboard Build...");
+  console.log("🏗️  Starting MockMirror Build...");
 
   if (!fs.existsSync(ANALYSIS_PATH)) {
     console.error("❌ No analysis file found.");
@@ -21,11 +23,11 @@ async function buildDashboard() {
   const viteInputs = {}; 
   const dashboardData = [];
 
-  // 1. FIND GLOBAL CSS
+  // 1. STYLE SNIFFER
   const cssFiles = glob.sync('src/**/*.css');
   const cssImports = cssFiles.map(f => `import './${f}';`).join('\n');
 
-  // 2. LOOP THROUGH FILES
+  // 2. GENERATE PREVIEWS
   files.forEach((filePath) => {
     const data = analysis[filePath];
     const safeName = path.basename(filePath, path.extname(filePath));
@@ -61,58 +63,87 @@ async function buildDashboard() {
         </div>
       );
     `;
-    fs.writeFileSync(entryName, entryContent);
+    fs.writeFileSync(path.join(USER_DIR, entryName), entryContent);
 
     const htmlContent = `
       <!DOCTYPE html>
       <html>
         <head><title>Preview: ${safeName}</title></head>
-        <body>
-          <div id="root"></div>
-          <script type="module" src="/${entryName}"></script>
-        </body>
+        <body><div id="root"></div><script type="module" src="/${entryName}"></script></body>
       </html>
     `;
-    fs.writeFileSync(htmlName, htmlContent);
+    fs.writeFileSync(path.join(USER_DIR, htmlName), htmlContent);
 
-    viteInputs[safeName] = path.resolve(process.cwd(), htmlName); // Use CWD for resolving inputs
+    viteInputs[safeName] = path.resolve(USER_DIR, htmlName);
     dashboardData.push({ name: safeName, url: htmlName, originalPath: filePath });
   });
 
-  // 3. GENERATE DATA & DASHBOARD
-  const dataFileContent = `export const previews = ${JSON.stringify(dashboardData, null, 2)};`;
-  fs.writeFileSync('src/dashboard.data.js', dataFileContent);
+  // 3. COPY DASHBOARD ASSETS TO USER DIR (So Vite can build them)
+  // We read the source from the Action dir and write it to the User dir
+  const dashboardSrc = fs.readFileSync(path.join(ACTION_DIR, 'src', 'Dashboard.jsx'), 'utf8');
+  const dashboardCss = fs.readFileSync(path.join(ACTION_DIR, 'src', 'dashboard.css'), 'utf8');
+  
+  // We modify the import path in Dashboard.jsx to point to the local data file we are about to create
+  const adjustedDashboardSrc = dashboardSrc.replace("import { previews } from './dashboard.data';", "import { previews } from './dashboard.data.js';");
 
-  const dashboardHtml = `
+  fs.writeFileSync(path.join(USER_DIR, 'mm-dashboard.jsx'), adjustedDashboardSrc);
+  fs.writeFileSync(path.join(USER_DIR, 'dashboard.css'), dashboardCss);
+
+  // 4. GENERATE DATA
+  const dataFileContent = `export const previews = ${JSON.stringify(dashboardData, null, 2)};`;
+  fs.writeFileSync(path.join(USER_DIR, 'dashboard.data.js'), dataFileContent);
+
+  // 5. GENERATE DASHBOARD HTML
+  const indexHtml = `
     <!DOCTYPE html>
     <html lang="en">
       <head><meta charset="UTF-8" /><title>MockMirror Dashboard</title></head>
-      <body><div id="root"></div><script type="module" src="/src/Dashboard.jsx"></script></body>
+      <body><div id="root"></div><script type="module" src="/mm-dashboard.jsx"></script></body>
     </html>
   `;
-  fs.writeFileSync('index.html', dashboardHtml);
-  viteInputs['main'] = path.resolve(process.cwd(), 'index.html');
+  fs.writeFileSync(path.join(USER_DIR, 'index.html'), indexHtml);
+  viteInputs['main'] = path.resolve(USER_DIR, 'index.html');
 
-  // 4. GENERATE VITE CONFIG
+  // 6. GENERATE VITE CONFIG (IN ACTION DIR)
+  // We write the config inside the Action folder so it can find 'vite' and 'react' dependencies.
+  // But we set 'root' to USER_DIR so it finds the source files.
   const viteConfigContent = `
     import { defineConfig } from 'vite';
     import react from '@vitejs/plugin-react';
+    import path from 'path';
+
     export default defineConfig({
+      root: '${USER_DIR}', // Critical: Tell Vite to look in the User's repo
       plugins: [react()],
       base: './',
-      build: { rollupOptions: { input: ${JSON.stringify(viteInputs)} } }
+      build: {
+        outDir: 'dist',
+        emptyOutDir: true,
+        rollupOptions: {
+          input: ${JSON.stringify(viteInputs)}
+        }
+      },
+      resolve: {
+        alias: {
+          // Fix imports for the dashboard assets we just copied
+          '/dashboard.css': path.resolve('${USER_DIR}', 'dashboard.css')
+        }
+      }
     });
   `;
-  fs.writeFileSync('vite.multi.config.js', viteConfigContent);
+  // Save as .mjs in ACTION_DIR
+  const configPath = path.join(ACTION_DIR, 'vite.config.mjs');
+  fs.writeFileSync(configPath, viteConfigContent);
 
-  // 5. RUN BUILD
+  // 7. RUN BUILD
   try {
     console.log("📦 Running Vite Build...");
-    // Use the specific VITE_BIN path we found earlier
-    execSync(`"${VITE_BIN}" build --config vite.multi.config.js`, { stdio: 'inherit' });
+    // We execute the binary from ACTION_DIR, using the config from ACTION_DIR
+    execSync(`"${VITE_BIN}" build --config "${configPath}"`, { stdio: 'inherit' });
     console.log("🎉 Dashboard Build Complete!");
   } catch (err) {
     console.error("❌ Build Failed:", err.message);
+    process.exit(1);
   }
 }
 
